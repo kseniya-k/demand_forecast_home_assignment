@@ -2,9 +2,8 @@
 Class Dataset that contains dataset and data preparation
 """
 
-import datetime
 import logging
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
@@ -16,8 +15,8 @@ class Dataset:
     """
 
     data: pd.DataFrame
-    start_date: Union[datetime.datetime, str]
-    end_date: Union[datetime.datetime, str]
+    # start_date: Union[datetime.datetime, str]
+    # end_date: Union[datetime.datetime, str]
 
     frequency: str = "week"
 
@@ -28,16 +27,16 @@ class Dataset:
     def __init__(
         self,
         data: pd.DataFrame,
-        start_date: Optional[Union[datetime.datetime, str]] = None,
-        end_date: Optional[Union[datetime.datetime, str]] = None,
+        # start_date: Optional[Union[datetime.datetime, str]] = None,
+        # end_date: Optional[Union[datetime.datetime, str]] = None,
         frequency: Optional[str] = None,
         threshold_max_sales: Optional[int] = None,
         threshold_z_score: Optional[int] = None,
         threshold_count: Optional[int] = None,
     ):
         self.data = data
-        self.start_date = start_date or self.start_date
-        self.end_date = end_date or self.end_date
+        # self.start_date = start_date or self.start_date
+        # self.end_date = end_date or self.end_date
         self.frequency = frequency or self.frequency
         self.threshold_max_sales = threshold_max_sales or self.threshold_max_sales
         self.threshold_z_score = threshold_z_score or self.threshold_z_score
@@ -81,7 +80,7 @@ class Dataset:
 
         df: pd.DataFrame = None
         for i in range(num_iter):
-            df = _add_z_score(df or self.data)
+            df = _add_z_score(df if df is not None else self.data)
 
             count_to_drop = df[df["z_score_year"] >= self.threshold_z_score].shape[0]
             logging.info(
@@ -96,7 +95,7 @@ class Dataset:
         Remove SKU with too small amout of data
         :param threshold_count: threshold for count of rows
         """
-        df_counts = self.data.groupby["sku"].size()
+        df_counts = self.data.groupby("sku").size()
         new_sku = df_counts[df_counts < self.threshold_count]
         logging.info(f"Found {len(new_sku)} SKU with < {self.threshold_count} rows of data: {new_sku[:5]},...")
 
@@ -143,7 +142,7 @@ class Dataset:
                 .rename(columns={"mean": f"mean_{lag}w", "sum": f"sum_{lag}w"})
             )
 
-            self.data = pd.concat(self.data, df_stats)
+            self.data = self.data.merge(df_stats, on=["sku", "date"], how="left")
 
             # self.data[f"mean_{lag}w"] = df_stats["mean"].copy()
             # self.data[f"sum_{lag}w"] = df_stats["sum"].copy()
@@ -161,9 +160,9 @@ class Dataset:
         if self.frequency == "month":
             lags = [np.ceil(x / 4.5) for x in lags]
 
-        df_lags = self.data.sort_values(["sku", "date"]).groupby("id")["sales"].shift(lags).add_prefix("sales_lag_")
+        df_lags = self.data.sort_values(["sku", "date"]).groupby("sku")["sales"].shift(lags).add_prefix("sales_lag_")
 
-        self.data = pd.concat([self.data, df_lags], axis=1)
+        self.data = self.data.merge(df_lags, on=["sku", "date"], how="left")
 
     def add_date_features(self):
         """
