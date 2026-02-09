@@ -20,5 +20,5 @@ class Config:
     is_dense_data: bool = True
 
     heuristics_min_rows: int = 10
-    ci_alphas: Tuple[float, float, float] = (0.2, 0.5, 0.8)
+    ci_levels: Tuple[float, float, float] = (0.2, 0.5, 0.8)
     horizon_days: int = 8 * 7

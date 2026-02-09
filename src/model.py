@@ -19,11 +19,37 @@ class ModelType(Enum):
     lightgbm: str = "LightGBM"
 
 
+def clip_forecast(df: pd.DataFrame, ci_levels: List[float]) -> pd.DataFrame:
+    """
+    Make predicts and confidense intervals >= 0
+    """
+    for col in ["lower", "upper"]:
+        for level in ci_levels:
+            colname_full = f"{col}_{level}"
+            df[colname_full] = df[colname_full].apply(lambda x: max(x, 0))
+
+    df["predict"] = df["predict"].apply(lambda x: max(x, 0))
+    return df
+
+
 def fit_predict(config: Config, train: pd.DataFrame, test: pd.DataFrame) -> pd.DataFrame:
     """
     Fit a set of models for each SKU on train, predict on test
     """
-    ci_alphas = config.ci_alphas
+    ci_levels = config.ci_levels
+
+    if config.frequency == "day":
+        horizon_periods = config.horizon_days
+        freq_mult = 1
+        freq_name = "D"
+    elif config.frequency == "week":
+        horizon_periods = int(config.horizon_days / 7)
+        freq_mult = 7
+        freq_name = "W-SUN"
+    elif config.frequency == "month":
+        horizon_periods = int(np.floor(config.horizon_days / 30))
+        freq_mult = 31
+        freq_name = "MS"
 
     forecast_all: List[pd.DataFrame] = []
     for sku, df_sku in train.groupby("sku"):
@@ -38,49 +64,67 @@ def fit_predict(config: Config, train: pd.DataFrame, test: pd.DataFrame) -> pd.D
 
                 residuals.append(loo_residual)
 
-            ci_lengths = np.percentile(residuals, [x * 100 for x in ci_alphas])
-            alpha_ci_length = dict(zip(ci_alphas, ci_lengths))
+            ci_lengths = np.percentile(residuals, [x * 100 for x in ci_levels])
+            level_ci_length = dict(zip(ci_levels, ci_lengths))
 
             test_start_date = df_sku["date"].iloc[-1]
             forecast = pd.DataFrame(
                 {
-                    "ds": [test_start_date + pd.Timedelta(days=i) for i in range(1, config.horizon_days + 1)],
-                    "yhat": const_forecast * config.horizon_days / 7,
+                    "data": [test_start_date + pd.Timedelta(days=i * freq_mult) for i in range(1, horizon_periods + 1)],
+                    "predict": const_forecast * horizon_periods,
                 }
             )
 
-            # TODO: add for all alphas
-            forecast["yhat_lower"] = forecast["yhat"] - alpha_ci_length[ci_alphas[-1]]
-            forecast["yhat_upper"] = forecast["yhat"] + alpha_ci_length[ci_alphas[-1]]
-            forecast["model_type"] = "const_mean"
+            for level in ci_levels:
+                forecast[f"lower_{level}"] = forecast["yhat"] - level_ci_length[level]
+                forecast[f"upper_{level}"] = forecast["yhat"] + level_ci_length[level]
 
-            # for alpha in ci_alphas:
-            #    forecast[f"yhat_lower_{alpha}"] = forecast["yhat"] - alpha_ci_length[alpha]
-            #    forecast[f"yhat_upper_{alpha}"] = forecast["yhat"] + alpha_ci_length[alpha]
+            forecast["model_type"] = "const_mean"
         else:
             # TODO: add for all alphas
-            model = Prophet(interval_width=ci_alphas[-1])
+            model = Prophet()  # (interval_width=ci_levels[-1])
             model.add_country_holidays(country_name="IL")
 
             train_prophet = df_sku[["date", "sales"]]
             train_prophet.columns = ["ds", "y"]
             model.fit(train_prophet)
 
-            future = model.make_future_dataframe(periods=config.horizon_days)
-            forecast = model.predict(future)
-            forecast = forecast[forecast["ds"] > train_prophet["ds"].max()]
-            forecast["model_type"] = "prophet"
+            future = model.make_future_dataframe(periods=horizon_periods, freq=freq_name)
 
-        for c in ["yhat", "yhat_lower", "yhat_upper"]:
-            forecast[c] = forecast[c].apply(lambda x: max(x, 0))
+            forecast: pd.DataFrame = None  # type: ignore
+            for level in ci_levels:
+                model.interval_width = level
+                forecast_level = model.predict(future)
+                forecast_level = forecast_level[forecast_level["ds"] > train_prophet["ds"].max()]
+                forecast_level = forecast_level.rename(
+                    columns={"yhat_lower": f"lower_{level}", "yhat_upper": f"upper_{level}"}
+                )
+
+                if forecast is None:
+                    forecast = forecast_level
+                else:
+                    forecast = forecast.merge(forecast_level[["ds", f"lower_{level}", f"upper_{level}"]], on="ds")
+
+            forecast = forecast.rename(columns={"ds": "date", "yhat": "predict"})
+            forecast["model_type"] = "prophet"
 
         forecast["sku"] = sku
         forecast_all.append(forecast)
 
     forecast_all_pd = pd.concat(forecast_all)
+    forecast_all_pd = clip_forecast(forecast_all_pd, list(config.ci_levels))
+
     test_w_forecast = test.copy()
     test_w_forecast = test.merge(
-        forecast_all_pd[["ds", "sku", "yhat", "yhat_lower", "yhat_upper"]].rename(columns={"ds": "date"}),
+        forecast_all_pd[
+            [
+                "date",
+                "sku",
+                "predict",
+                *[f"lower_{level}" for level in ci_levels],
+                *[f"upper_{level}" for level in ci_levels],
+            ]
+        ],
         on=["date", "sku"],
         how="left",
     )
@@ -96,6 +140,7 @@ def calc_quality(
     :param hist_bias_borders: left and right borders of relative error histogram, should be a number between 0 and 1
     """
     df["target"] = df["sales"].fillna(0).apply(lambda x: max(x, 0))
+    df[predict_colname] = df[predict_colname].fillna(0).apply(lambda x: max(x, 0))
 
     df["err"] = df[predict_colname] - df["target"]
     df["abs_err"] = df["err"].abs()
