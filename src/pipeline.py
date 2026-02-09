@@ -1,31 +1,35 @@
 """
-Module contains data preparation, model learining and metric evaluation pipelines
+Data preparation, model learining and metric evaluation pipelines
 """
 
+import logging
 from typing import Optional
 
 import pandas as pd
 
-from data_preparation import Dataset
+from config import Config
+from data_preparation import (drop_anomaly_sales, drop_anomaly_sku,
+                              explode_frequency, sort_fillna_cast_date)
+from features import add_date_features, add_weekly_lag, add_weekly_stat
 
 
-def prepare_data(input_path: str, output_path: str, n_samples: Optional[int] = None):
+def prepare_data(input_path: str, output_path: str, frequency: str = "day", n_samples: Optional[int] = None):
+    config = Config(frequency=frequency)
+    logging.info(f"start with config: {config}")
+
     df = pd.read_parquet(input_path)
 
     if n_samples:
         df = df.sample(n_samples)
 
-    ds = Dataset(data=df, frequency="week")
-    ds.data["date"] = pd.to_datetime(ds.data["date"])
+    df = sort_fillna_cast_date(df)
+    df = drop_anomaly_sku(df, config)
+    df = drop_anomaly_sales(df, config)
 
-    ds.sort_fillna()
-    ds.drop_anomaly_sku()
-    ds.drop_anomaly_sales()
-    ds.drop_new_sku()
+    df = explode_frequency(df, config)
 
-    ds.explode_frequency()
-    ds.add_weekly_stat()
-    ds.add_weekly_lag()
-    ds.add_date_features()
+    df = add_weekly_stat(df)
+    df = add_weekly_lag(df, config)
+    df = add_date_features(df)
 
     df.to_parquet(output_path)
