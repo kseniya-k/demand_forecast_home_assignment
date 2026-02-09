@@ -46,7 +46,7 @@ def add_weekly_lag(
     :param lags: amount of weeks or months for lag
     """
     if config.frequency == "month":
-        lags = [np.ceil(x / 4.5) for x in lags]
+        lags = [int(np.ceil(x / 4.5)) for x in lags]
 
     for lag in lags:
         df[f"sales_lag_{lag}"] = df.groupby(["sku"])["sales"].shift(lag)

@@ -4,6 +4,7 @@ Functions for data preparation: drop irrelevant data, resample time series
 
 import logging
 
+import numpy as np
 import pandas as pd
 
 from config import Config
@@ -80,22 +81,47 @@ def drop_new_sku(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     return df
 
 
+def forward_fill_data(df: pd.DataFrame, config: Config, fillna: bool = True) -> pd.DataFrame:
+    """
+    For each SKU add rows with empty sales to the max date in dataset
+    :param fillna: if True, fill empty sales with 0
+    """
+    sku_max_dates = df.groupby("sku")["date"].max()
+
+    if config.max_date is not None:
+        max_date = config.max_date
+    else:
+        max_date = sku_max_dates.max()
+
+    sku_to_ffill = sku_max_dates[sku_max_dates < max_date].index.values
+    df_to_add = pd.DataFrame({"date": [max_date] * len(sku_to_ffill), "sku": sku_to_ffill})
+
+    if fillna:
+        df_to_add["sales"] = [0.0] * len(sku_to_ffill)
+    else:
+        df_to_add["sales"] = [np.nan] * len(sku_to_ffill)
+
+    df = pd.concat([df, df_to_add], axis=0)
+    df = df.sort_values(by=["sku", "date"])
+    return df
+
+
 def explode_frequency(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     """
     Transform data to evenly-spaced time series
-    :param frequency: timestamp name, can be "week" or "month"
     """
     if config.frequency == "day":
-        return
-
-    if config.frequency == "week":
+        pd_freq_name = "D"
+    elif config.frequency == "week":
         pd_freq_name = "W-SUN"
     elif config.frequency == "month":
-        pd_freq_name = "M"
+        pd_freq_name = "MS"
     else:
-        raise NotImplementedError(f"Unexpected frequency! Expected 'week' or 'month', got {config.frequency}")
+        raise NotImplementedError(f"Unexpected frequency! Expected 'day', 'week' or 'month', got {config.frequency}")
 
     result = df.set_index("date").groupby("sku").resample(pd_freq_name, label="left", closed="left").sum().reset_index()
 
-    df = result
-    return df
+    # if config.is_dense_data:
+    #    result = result.groupby("sku").asfreq(pd_freq_name).fillna(0).reset_index()
+
+    return result
