@@ -7,7 +7,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from config import Config
+from config import Config, get_frequency_params
 
 
 def sort_fillna_cast_date(df: pd.DataFrame) -> pd.DataFrame:
@@ -110,16 +110,9 @@ def explode_frequency(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     """
     Transform data to evenly-spaced time series
     """
-    if config.frequency == "day":
-        pd_freq_name = "D"
-    elif config.frequency == "week":
-        pd_freq_name = "W-SUN"
-    elif config.frequency == "month":
-        pd_freq_name = "MS"
-    else:
-        raise NotImplementedError(f"Unexpected frequency! Expected 'day', 'week' or 'month', got {config.frequency}")
+    _, _, freq_name = get_frequency_params(config.frequency, config.horizon_days)
 
-    result = df.set_index("date").groupby("sku").resample(pd_freq_name, label="left", closed="left").sum().reset_index()
+    result = df.set_index("date").groupby("sku").resample(freq_name, label="left", closed="left").sum().reset_index()
 
     # if config.is_dense_data:
     #    result = result.groupby("sku").asfreq(pd_freq_name).fillna(0).reset_index()

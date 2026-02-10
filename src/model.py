@@ -2,21 +2,13 @@
 Simple interface for fit and predict
 """
 
-from enum import Enum
 from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
 from prophet import Prophet
 
-from config import Config
-
-
-class ModelType(Enum):
-    sarima: str = "SARIMA"
-    hw: str = "holt-winters"
-    prophet: str = "Prohpet"
-    lightgbm: str = "LightGBM"
+from config import Config, get_frequency_params
 
 
 def clip_forecast(df: pd.DataFrame, ci_levels: List[float]) -> pd.DataFrame:
@@ -32,81 +24,95 @@ def clip_forecast(df: pd.DataFrame, ci_levels: List[float]) -> pd.DataFrame:
     return df
 
 
+def fit_predict_const_mean(
+    train: pd.DataFrame, ci_levels: Tuple[float, float, float], horizon_period: int, freq_mult: int
+) -> pd.DataFrame:
+    """
+    Make constant predict as mean train sales. Compute confidence intervals from residuals on leave-one-out validation
+    :param train: input dataframe
+    :param ci_levels: set of three 1 - alpha for confidence intervals
+    :param horizon_period: horizon, measured in current time series frequency units (e.g. weeks, months, ...)
+    :param freq_mult: amount of days in one frequency step (e.g. 7 for weekly frequency)
+    """
+    const_forecast = train["sales"].mean()
+
+    # compute confidence intervals from residuals for leave-one-out strategy
+    residuals = []
+    for ind, row in train.iterrows():
+        loo_forecast = train[train.index.values != ind]["sales"].mean()
+        loo_residual = row["sales"] - loo_forecast
+
+        residuals.append(loo_residual)
+
+    ci_lengths = np.percentile(residuals, [x * 100 for x in ci_levels])
+    level_ci_length = dict(zip(ci_levels, ci_lengths))
+
+    test_start_date = train["date"].iloc[-1]
+    forecast = pd.DataFrame(
+        {
+            "data": [test_start_date + pd.Timedelta(days=i * freq_mult) for i in range(1, horizon_period + 1)],
+            "predict": const_forecast * horizon_period,
+        }
+    )
+
+    for level in ci_levels:
+        forecast[f"lower_{level}"] = forecast["predict"] - level_ci_length[level]
+        forecast[f"upper_{level}"] = forecast["predict"] + level_ci_length[level]
+
+    forecast["model_type"] = "const_mean"
+    return forecast
+
+
+def fit_predict_prophet(
+    train: pd.DataFrame, ci_levels: Tuple[float, float, float], horizon_period: int, freq_name: str
+) -> pd.DataFrame:
+    """
+    Make constant predict as mean train sales. Compute confidence intervals from residuals on leave-one-out validation
+    :param train: input dataframe
+    :param ci_levels: set of three 1 - alpha for confidence intervals
+    :param horizon_period: horizon, measured in current time series frequency units (e.g. weeks, months, ...)
+    :param freq_name: pandas name for frequency (e.g. "W-SUN" for weekly frequency)
+    """
+    model = Prophet()
+    model.add_country_holidays(country_name="IL")
+
+    train_prophet = train[["date", "sales"]]
+    train_prophet.columns = ["ds", "y"]
+    model.fit(train_prophet)
+
+    future = model.make_future_dataframe(periods=horizon_period, freq=freq_name)
+
+    forecast: pd.DataFrame = None  # type: ignore
+    for level in ci_levels:
+        model.interval_width = level
+        forecast_level = model.predict(future)
+        forecast_level = forecast_level[forecast_level["ds"] > train_prophet["ds"].max()]
+        forecast_level = forecast_level.rename(
+            columns={"ds": "date", "yhat": "predict", "yhat_lower": f"lower_{level}", "yhat_upper": f"upper_{level}"}
+        )
+
+        if forecast is None:
+            forecast = forecast_level
+        else:
+            forecast = forecast.merge(forecast_level[["date", f"lower_{level}", f"upper_{level}"]], on="date")
+
+    forecast["model_type"] = "prophet"
+    return forecast
+
+
 def fit_predict(config: Config, train: pd.DataFrame, test: pd.DataFrame) -> pd.DataFrame:
     """
     Fit a set of models for each SKU on train, predict on test
     """
     ci_levels = config.ci_levels
-
-    if config.frequency == "day":
-        horizon_periods = config.horizon_days
-        freq_mult = 1
-        freq_name = "D"
-    elif config.frequency == "week":
-        horizon_periods = int(config.horizon_days / 7)
-        freq_mult = 7
-        freq_name = "W-SUN"
-    elif config.frequency == "month":
-        horizon_periods = int(np.floor(config.horizon_days / 30))
-        freq_mult = 31
-        freq_name = "MS"
+    horizon_period, freq_mult, freq_name = get_frequency_params(config.frequency, config.horizon_days)
 
     forecast_all: List[pd.DataFrame] = []
     for sku, df_sku in train.groupby("sku"):
         if df_sku.shape[0] < config.heuristics_min_rows:
-            const_forecast = df_sku["sales"].mean()
-
-            # compute confidence intervals from residuals for leave-one-out strategy
-            residuals = []
-            for ind, row in df_sku.iterrows():
-                loo_forecast = df_sku[df_sku.index.values != ind]["sales"].mean()
-                loo_residual = row["sales"] - loo_forecast
-
-                residuals.append(loo_residual)
-
-            ci_lengths = np.percentile(residuals, [x * 100 for x in ci_levels])
-            level_ci_length = dict(zip(ci_levels, ci_lengths))
-
-            test_start_date = df_sku["date"].iloc[-1]
-            forecast = pd.DataFrame(
-                {
-                    "data": [test_start_date + pd.Timedelta(days=i * freq_mult) for i in range(1, horizon_periods + 1)],
-                    "predict": const_forecast * horizon_periods,
-                }
-            )
-
-            for level in ci_levels:
-                forecast[f"lower_{level}"] = forecast["yhat"] - level_ci_length[level]
-                forecast[f"upper_{level}"] = forecast["yhat"] + level_ci_length[level]
-
-            forecast["model_type"] = "const_mean"
+            forecast = fit_predict_const_mean(df_sku, ci_levels, horizon_period, freq_mult)
         else:
-            # TODO: add for all alphas
-            model = Prophet()  # (interval_width=ci_levels[-1])
-            model.add_country_holidays(country_name="IL")
-
-            train_prophet = df_sku[["date", "sales"]]
-            train_prophet.columns = ["ds", "y"]
-            model.fit(train_prophet)
-
-            future = model.make_future_dataframe(periods=horizon_periods, freq=freq_name)
-
-            forecast: pd.DataFrame = None  # type: ignore
-            for level in ci_levels:
-                model.interval_width = level
-                forecast_level = model.predict(future)
-                forecast_level = forecast_level[forecast_level["ds"] > train_prophet["ds"].max()]
-                forecast_level = forecast_level.rename(
-                    columns={"yhat_lower": f"lower_{level}", "yhat_upper": f"upper_{level}"}
-                )
-
-                if forecast is None:
-                    forecast = forecast_level
-                else:
-                    forecast = forecast.merge(forecast_level[["ds", f"lower_{level}", f"upper_{level}"]], on="ds")
-
-            forecast = forecast.rename(columns={"ds": "date", "yhat": "predict"})
-            forecast["model_type"] = "prophet"
+            forecast = fit_predict_prophet(df_sku, ci_levels, horizon_period, freq_name)
 
         forecast["sku"] = sku
         forecast_all.append(forecast)
