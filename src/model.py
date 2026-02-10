@@ -1,8 +1,7 @@
 """
 Simple interface for fit and predict
 """
-
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -100,9 +99,12 @@ def fit_predict_prophet(
     return forecast
 
 
-def fit_predict(config: Config, train: pd.DataFrame, test: pd.DataFrame) -> pd.DataFrame:
+# TODO: save models, move predict to separate function
+def fit_predict(config: Config, train: pd.DataFrame, test: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """
-    Fit a set of models for each SKU on train, predict on test
+    Fit a set of models for each SKU on train, predict to config.horizon_days to future
+    :param train: input data
+    :param test: test data. if passed, return joined prediction and test
     """
     ci_levels = config.ci_levels
     horizon_period, freq_mult, freq_name = get_frequency_params(config.frequency, config.horizon_days)
@@ -120,21 +122,24 @@ def fit_predict(config: Config, train: pd.DataFrame, test: pd.DataFrame) -> pd.D
     forecast_all_pd = pd.concat(forecast_all)
     forecast_all_pd = clip_forecast(forecast_all_pd, list(config.ci_levels))
 
-    test_w_forecast = test.copy()
-    test_w_forecast = test.merge(
-        forecast_all_pd[
-            [
-                "date",
-                "sku",
-                "predict",
-                *[f"lower_{level}" for level in ci_levels],
-                *[f"upper_{level}" for level in ci_levels],
-            ]
-        ],
-        on=["date", "sku"],
-        how="left",
-    )
-    return test_w_forecast
+    if test is not None:
+        result = test.copy()
+        result = test.merge(
+            forecast_all_pd[
+                [
+                    "date",
+                    "sku",
+                    "predict",
+                    *[f"lower_{level}" for level in ci_levels],
+                    *[f"upper_{level}" for level in ci_levels],
+                ]
+            ],
+            on=["date", "sku"],
+            how="left",
+        )
+    else:
+        result = forecast_all_pd
+    return result
 
 
 def calc_quality(
