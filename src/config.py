@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -23,6 +24,17 @@ class Config:
     heuristics_min_rows: int = 10
     ci_levels: Tuple[float, float, float] = (0.2, 0.5, 0.8)
     horizon_days: int = 8 * 7
+
+    data_folder: str = "data"
+    predict_folder: str = "predict"
+
+    @property
+    def data_path(self) -> str:
+        return os.path.join(self.data_folder, f"data_{self.frequency}.parquet")
+
+    @property
+    def predict_path(self) -> str:
+        return os.path.join(self.predict_folder, f"predict_{self.frequency}.parquet")
 
 
 def get_frequency_params(frequency_name: str, horizon_days: int) -> Tuple[int, int, str]:

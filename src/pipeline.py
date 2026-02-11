@@ -3,6 +3,7 @@ Data preparation, model learining and metric evaluation pipelines
 """
 
 import logging
+import os
 import sys
 from typing import Optional
 
@@ -16,7 +17,7 @@ from preparation import (drop_anomaly_sales, drop_anomaly_sku,
                          sort_fillna_cast_date)
 
 
-def prepare_data(config: Config, input_path: str, output_path: str, n_samples: Optional[int] = None):
+def prepare_data(config: Config, input_path: str, n_samples: Optional[int] = None):
     logging.info(f"Config: {config}")
 
     df = pd.read_parquet(input_path)
@@ -37,34 +38,36 @@ def prepare_data(config: Config, input_path: str, output_path: str, n_samples: O
     df = add_weekly_lag(df, config)
     df = add_date_features(df)
 
-    df.to_parquet(output_path)
+    if not os.path.exists(config.data_folder):
+        os.makedirs(config.data_folder)
+
+    df.to_parquet(config.data_path)
 
 
-def fit_predict_model(config: Config, input_path: str, output_path: str):
+def fit_predict_model(config: Config):
     logging.info(f"Config: {config}")
 
-    df = pd.read_parquet(input_path)
+    df = pd.read_parquet(config.data_path)
     preidct = fit_predict(config, df)
 
-    preidct.to_parquet(output_path)
+    if not os.path.exists(config.predict_folder):
+        os.makedirs(config.predict_folder)
+
+    preidct.to_parquet(config.predict_path)
 
 
 def main(argv, argc):
     path = argv[0]
 
-    logging.info(
-        f"Start predict on weekly level for path {path}. Predicts will be saved to 'data/predict_weekly.parquet'"
-    )
     config = Config(frequency="week", horizon_days=7 * 8)
-    prepare_data(config, path, "data/data_weekly.parquet")
-    fit_predict_model(config, "data/data_weekly.parquet", "data/predict_weekly.parquet")
+    logging.info(f"Start predict on weekly level for path {path}. Predicts will be saved to {config.predict_path}")
+    prepare_data(config, path)
+    fit_predict_model(config)
 
-    logging.info(
-        f"Start predict on monthly level for path {path}. Predicts will be saved to 'data/predict_weekly.parquet'"
-    )
+    logging.info(f"Start predict on monthly level for path {path}. Predicts will be saved to {config.predict_path}")
     config = Config(frequency="month", horizon_days=12 * 30)
-    prepare_data(config, path, "data/data_weekly.parquet")
-    fit_predict(config, "data/data_weekly.parquet", "data/predict_monthly.parquet")
+    prepare_data(config, path)
+    fit_predict(config)
 
 
 if __name__ == "__main__":
