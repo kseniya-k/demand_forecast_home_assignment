@@ -12,7 +12,7 @@ import pandas as pd
 from config import Config
 from features import add_date_features, add_weekly_lag, add_weekly_stat
 from model import fit_predict
-from preparation import (drop_anomaly_sales, drop_anomaly_sku,
+from preparation import (add_dropped_sku, drop_anomaly_sales, drop_anomaly_sku,
                          explode_frequency, forward_fill_data,
                          sort_fillna_cast_date)
 
@@ -20,12 +20,12 @@ from preparation import (drop_anomaly_sales, drop_anomaly_sku,
 def prepare_data(config: Config, input_path: str, n_samples: Optional[int] = None):
     logging.info(f"Config: {config}, path: {input_path}")
 
-    df = pd.read_parquet(input_path)
+    df_raw = pd.read_parquet(input_path)
 
     if n_samples:
-        df = df.sample(n_samples)
+        df_raw = df_raw.sample(n_samples)
 
-    df = sort_fillna_cast_date(df)
+    df = sort_fillna_cast_date(df_raw)
     df = drop_anomaly_sku(df, config)
     df = drop_anomaly_sales(df, config)
 
@@ -41,6 +41,7 @@ def prepare_data(config: Config, input_path: str, n_samples: Optional[int] = Non
     if not os.path.exists(config.data_folder):
         os.makedirs(config.data_folder)
 
+    df = add_dropped_sku(df, df_raw, config)
     df.to_parquet(config.data_path)
 
 

@@ -119,3 +119,14 @@ def explode_frequency(df: pd.DataFrame, config: Config) -> pd.DataFrame:
 
     result = df.set_index("date").groupby("sku").resample(freq_name, label="left", closed="left").sum().reset_index()
     return result
+
+
+def add_dropped_sku(df_prepraed: pd.DataFrame, df_raw: pd.DataFrame, config: Config) -> pd.DataFrame:
+    """
+    Add SKU that was dropped before as single points with date = dataset max date
+    """
+    new_sku = [x for x in df_raw["sku"].unique() if x not in df_prepraed["sku"].unique()]
+    max_date = df_prepraed["date"].max()
+    df_new_sku = pd.DataFrame({"date": [max_date] * len(new_sku), "sku": new_sku, "sales": [0.0] * len(new_sku)})
+    df_prepraed = pd.concat([df_prepraed, df_new_sku], axis=0)
+    return df_prepraed

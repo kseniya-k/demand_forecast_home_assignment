@@ -1,5 +1,5 @@
 """
-Basic features
+Basic features. Are not used in current implementation
 """
 
 from typing import List

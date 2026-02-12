@@ -26,7 +26,11 @@ def clip_forecast(df: pd.DataFrame, ci_levels: List[float]) -> pd.DataFrame:
 
 
 def fit_predict_const_mean(
-    train: pd.DataFrame, ci_levels: Tuple[float, float, float], horizon_period: int, freq_name: str
+    train: pd.DataFrame,
+    ci_levels: Tuple[float, float, float],
+    horizon_period: int,
+    freq_name: str,
+    predict_placeholder: float = 0.0,
 ) -> pd.DataFrame:
     """
     Compute constant predict with mean train sales for the last year. Compute confidence intervals from residuals on
@@ -36,6 +40,7 @@ def fit_predict_const_mean(
     :param ci_levels: set of three (1 - alpha) levels for confidence intervals
     :param horizon_period: horizon, measured in current time series frequency units (e.g. weeks, months, ...)
     :param freq_name: pandas name for frequency (e.g. "W-SUN" for weekly frequency)
+    :param predict_placeholder: number to use as predict for SKU without any sales
     """
     const_forecast = train[train["date"] > train["date"].max() - pd.Timedelta(days=365)]["sales"].mean()
 
@@ -50,6 +55,10 @@ def fit_predict_const_mean(
     ci_lengths = np.percentile(residuals, [x * 100 for x in ci_levels])
     level_ci_length = dict(zip(ci_levels, ci_lengths))
 
+    if train.shape[0] < 2 and const_forecast < 1e-5:
+        const_forecast = predict_placeholder
+        level_ci_length = {level: predict_placeholder for level in ci_levels}
+
     test_start_date = train["date"].iloc[-1]
     forecast = pd.DataFrame(
         {
@@ -59,8 +68,8 @@ def fit_predict_const_mean(
     )
 
     for level in ci_levels:
-        forecast[f"lower_{level}"] = forecast["predict"] - level_ci_length[level]
-        forecast[f"upper_{level}"] = forecast["predict"] + level_ci_length[level]
+        forecast[f"lower_{level}"] = forecast["predict"] - np.abs(level_ci_length[level])
+        forecast[f"upper_{level}"] = forecast["predict"] + np.abs(level_ci_length[level])
 
     forecast["model_type"] = "const_mean"
     return forecast
@@ -88,7 +97,7 @@ def fit_predict_prophet(
 
     forecast: pd.DataFrame = None  # type: ignore
     for level in ci_levels:
-        model.interval_width = level
+        model.interval_width = 1 - level
         forecast_level = model.predict(future)
         forecast_level = forecast_level[forecast_level["ds"] > train_prophet["ds"].max()]
         forecast_level = forecast_level.rename(
@@ -191,6 +200,7 @@ def fit_predict(config: Config, train: pd.DataFrame, test: Optional[pd.DataFrame
     """
     ci_levels = config.ci_levels
     horizon_period, freq_name, seasonal_period = get_frequency_params(config.frequency, config.horizon_days)
+    predict_placeholder = np.percentile(train["sales"].values, 5)
 
     forecast_all: List[pd.DataFrame] = []
     for sku, df_sku in train.groupby("sku"):
@@ -198,12 +208,14 @@ def fit_predict(config: Config, train: pd.DataFrame, test: Optional[pd.DataFrame
             logging.debug(f"Handle sky {sku}")
 
         if df_sku.shape[0] < config.heuristics_min_rows or df_sku["sales"].std() < 1e-5 or df_sku["sales"].max() < 1e-5:
-            forecast = fit_predict_const_mean(df_sku, ci_levels, horizon_period, freq_name)
+            forecast = fit_predict_const_mean(df_sku, ci_levels, horizon_period, freq_name, predict_placeholder)
         else:
             if config.model_name == "prophet":
                 forecast = fit_predict_prophet(df_sku, ci_levels, horizon_period, freq_name)
             elif config.model_name == "arima":
                 forecast = fit_predict_arima(df_sku, ci_levels, horizon_period, freq_name, seasonal_period)
+            elif config.model_name == "const":
+                forecast = fit_predict_const_mean(df_sku, ci_levels, horizon_period, freq_name, predict_placeholder)
             else:
                 raise NotImplementedError(f"Unexpected model type: {config.model_name}")
 
