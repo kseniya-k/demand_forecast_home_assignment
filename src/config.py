@@ -27,14 +27,15 @@ class Config:
 
     data_folder: str = "data"
     predict_folder: str = "predict"
+    model_name: str = "prophet"
 
     @property
     def data_path(self) -> str:
-        return os.path.join(self.data_folder, f"data_{self.frequency}.parquet")
+        return os.path.join(self.data_folder, f"data_{self.frequency}_{self.model_name}.parquet")
 
     @property
     def predict_path(self) -> str:
-        return os.path.join(self.predict_folder, f"predict_{self.frequency}.parquet")
+        return os.path.join(self.predict_folder, f"predict_{self.frequency}_{self.model_name}.parquet")
 
 
 def get_frequency_params(frequency_name: str, horizon_days: int) -> Tuple[int, int, str]:
