@@ -11,6 +11,9 @@ from config import Config, get_frequency_params
 
 
 def sort_fillna_cast_date(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sort by sku and date, fill empty sales with 0, drop NaN in sku and date
+    """
     df["date"] = pd.to_datetime(df["date"])
 
     df = df.sort_values(["sku", "date"])
@@ -35,8 +38,9 @@ def drop_anomaly_sku(df: pd.DataFrame, config: Config) -> pd.DataFrame:
 
 def drop_anomaly_sales(df: pd.DataFrame, config: Config, num_iter: int = 2) -> pd.DataFrame:
     """
-    Remove sales that deviates from distribution of SKU sales. Take last year for mean, std estimation
+    Remove sales that deviate from distribution of SKU sales. Take last year for mean and std estimation
     Run num_iter loops, each time drop outliers from previous run and recompute sample mean, std
+    Running more then one time eliminates cases with anomaly large sales and consequent anomaly large return
 
     :param num_iter: number of Z-score thresholding loops
     """
@@ -83,7 +87,8 @@ def drop_new_sku(df: pd.DataFrame, config: Config) -> pd.DataFrame:
 
 def forward_fill_data(df: pd.DataFrame, config: Config, fillna: bool = True) -> pd.DataFrame:
     """
-    For each SKU add rows with empty sales to the max date in dataset
+    For each SKU add rows with empty sales until date will be the max date in df
+
     :param fillna: if True, fill empty sales with 0
     """
     sku_max_dates = df.groupby("sku")["date"].max()
@@ -110,11 +115,7 @@ def explode_frequency(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     """
     Transform data to evenly-spaced time series
     """
-    _, _, freq_name = get_frequency_params(config.frequency, config.horizon_days)
+    _, freq_name, _ = get_frequency_params(config.frequency, config.horizon_days)
 
     result = df.set_index("date").groupby("sku").resample(freq_name, label="left", closed="left").sum().reset_index()
-
-    # if config.is_dense_data:
-    #    result = result.groupby("sku").asfreq(pd_freq_name).fillna(0).reset_index()
-
     return result

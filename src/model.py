@@ -2,6 +2,7 @@
 Simple interface for fit and predict
 """
 
+import logging
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -13,7 +14,7 @@ from config import Config, get_frequency_params
 
 def clip_forecast(df: pd.DataFrame, ci_levels: List[float]) -> pd.DataFrame:
     """
-    Make predicts and confidense intervals >= 0
+    Make predicts and predict intervals >= 0
     """
     for col in ["lower", "upper"]:
         for level in ci_levels:
@@ -25,16 +26,18 @@ def clip_forecast(df: pd.DataFrame, ci_levels: List[float]) -> pd.DataFrame:
 
 
 def fit_predict_const_mean(
-    train: pd.DataFrame, ci_levels: Tuple[float, float, float], horizon_period: int, freq_mult: int
+    train: pd.DataFrame, ci_levels: Tuple[float, float, float], horizon_period: int, freq_name: str
 ) -> pd.DataFrame:
     """
-    Make constant predict as mean train sales. Compute confidence intervals from residuals on leave-one-out validation
+    Compute constant predict with mean train sales for the last year. Compute confidence intervals from residuals on
+    leave-one-out validation
+
     :param train: input dataframe
-    :param ci_levels: set of three 1 - alpha for confidence intervals
+    :param ci_levels: set of three (1 - alpha) levels for confidence intervals
     :param horizon_period: horizon, measured in current time series frequency units (e.g. weeks, months, ...)
-    :param freq_mult: amount of days in one frequency step (e.g. 7 for weekly frequency)
+    :param freq_name: pandas name for frequency (e.g. "W-SUN" for weekly frequency)
     """
-    const_forecast = train["sales"].mean()
+    const_forecast = train[train["date"] > train["date"].max() - pd.Timedelta(days=365)]["sales"].mean()
 
     # compute confidence intervals from residuals for leave-one-out strategy
     residuals = []
@@ -50,8 +53,8 @@ def fit_predict_const_mean(
     test_start_date = train["date"].iloc[-1]
     forecast = pd.DataFrame(
         {
-            "date": [test_start_date + pd.Timedelta(days=i * freq_mult) for i in range(1, horizon_period + 1)],
-            "predict": const_forecast * horizon_period,
+            "date": pd.date_range(start=test_start_date, periods=horizon_period + 1, freq=freq_name).tolist()[1:],
+            "predict": [const_forecast] * horizon_period,
         }
     )
 
@@ -67,8 +70,10 @@ def fit_predict_prophet(
     train: pd.DataFrame, ci_levels: Tuple[float, float, float], horizon_period: int, freq_name: str
 ) -> pd.DataFrame:
     """
+    Fit and predict with Prophet model
+
     :param train: input dataframe
-    :param ci_levels: set of three 1 - alpha for confidence intervals
+    :param ci_levels: set of three (1 - alpha) levels for confidence intervals
     :param horizon_period: horizon, measured in current time series frequency units (e.g. weeks, months, ...)
     :param freq_name: pandas name for frequency (e.g. "W-SUN" for weekly frequency)
     """
@@ -103,15 +108,21 @@ def fit_predict_arima(
     train: pd.DataFrame,
     ci_levels: Tuple[float, float, float],
     horizon_period: int,
-    freq_mult: int,
+    freq_name: str,
+    seasonal_period: int,
     order: Tuple[int, int, int] = (2, 0, 0),
-    seasonal_order: Tuple[int, int, int, int] = (1, 0, 1, 52),
+    seasonal_order: Tuple[int, int, int] = (1, 0, 1),
 ) -> pd.DataFrame:
     """
+    Fit and predict with seasonal ARIMA model with fixed hyperparameters
+
     :param train: input dataframe
-    :param ci_levels: set of three 1 - alpha for confidence intervals
-    :param horizon_period: horizon, measured in current time series frequency units (e.g. weeks, months, ...)
+    :param ci_levels: set of three (1 - alpha) levels for confidence intervals
+    :param horizon_period: horizon, measured in current time series frequency units (e.g. weeks, months)
     :param freq_name: pandas name for frequency (e.g. "W-SUN" for weekly frequency)
+    :param seasonal_period: year seasonality in current frequency units (e.g. 52 for weekly data, 12 for monthly
+    :param order: p, q, d params for ARIMA
+    :param seasonal_order: P, Q, D params for seasonal ARIMA
     """
     from pmdarima import ARIMA
     from scipy.special import inv_boxcox
@@ -127,30 +138,46 @@ def fit_predict_arima(
     sales_bc, lmbda = boxcox(train["sales_positive"].values)
 
     # fit, predict
-    model = ARIMA(order=order, seasonal_order=seasonal_order, with_intercept=True, suppress_warnings=True)
-    model.fit(sales_bc)
-    forecast_raw = inv_boxcox(model.predict(n_periods=horizon_period), lmbda) + (-1 if min_sales < 0 else 0)
+    seasonal_order_full: Tuple[int, int, int, int] = (*seasonal_order, seasonal_period)
+    model = ARIMA(order=order, seasonal_order=seasonal_order_full, with_intercept=True, suppress_warnings=True)
+
+    is_model_learned = False
+    try:
+        model.fit(sales_bc)
+        forecast_raw = inv_boxcox(model.predict(n_periods=horizon_period), lmbda) + (-1 if min_sales < 0 else 0)
+        is_model_learned = True
+    except Exception:
+        logging.warning(
+            f"""SARIMA with params: {order} and seasonal params: {seasonal_order_full} didn't learn!
+            Error: {Exception}
+            Switch to heuristics"""
+        )
+        forecast_raw = [-1.0] * horizon_period
+        is_model_learned = False
 
     test_start_date = train["date"].iloc[-1]
     forecast = pd.DataFrame(
         {
+            "date": pd.date_range(start=test_start_date, periods=horizon_period + 1, freq=freq_name).tolist()[1:],
             "predict": forecast_raw,
-            "date": [test_start_date + pd.Timedelta(days=i * freq_mult) for i in range(1, horizon_period + 1)],
         }
     )
 
-    for level in ci_levels:
-        _, forecast_level_raw = model.predict(n_periods=horizon_period, return_conf_int=True, alpha=1 - level)
-        lower_raw = [x[0] for x in forecast_level_raw]
-        upper_raw = [x[1] for x in forecast_level_raw]
+    if is_model_learned:
+        for level in ci_levels:
+            _, forecast_level_raw = model.predict(n_periods=horizon_period, return_conf_int=True, alpha=1 - level)
+            lower_raw = [x[0] for x in forecast_level_raw]
+            upper_raw = [x[1] for x in forecast_level_raw]
 
-        lower = inv_boxcox(lower_raw, lmbda) + (-1 if min_sales < 0 else 0)
-        upper = inv_boxcox(upper_raw, lmbda) + (-1 if min_sales < 0 else 0)
+            lower = inv_boxcox(lower_raw, lmbda) + (-1 if min_sales < 0 else 0)
+            upper = inv_boxcox(upper_raw, lmbda) + (-1 if min_sales < 0 else 0)
 
-        forecast[f"lower_{level}"] = lower
-        forecast[f"upper_{level}"] = upper
+            forecast[f"lower_{level}"] = lower
+            forecast[f"upper_{level}"] = upper
 
-    forecast["model_type"] = "ARIMA"
+        forecast["model_type"] = "ARIMA"
+    else:
+        forecast = fit_predict_const_mean(train, ci_levels, horizon_period, freq_name)
     return forecast
 
 
@@ -158,18 +185,27 @@ def fit_predict_arima(
 def fit_predict(config: Config, train: pd.DataFrame, test: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """
     Fit a set of models for each SKU on train, predict to config.horizon_days to future
+
     :param train: input data
-    :param test: test data. if passed, return joined prediction and test
+    :param test: test data. if passed, return test joined with prediction
     """
     ci_levels = config.ci_levels
-    horizon_period, freq_mult, freq_name = get_frequency_params(config.frequency, config.horizon_days)
+    horizon_period, freq_name, seasonal_period = get_frequency_params(config.frequency, config.horizon_days)
 
     forecast_all: List[pd.DataFrame] = []
     for sku, df_sku in train.groupby("sku"):
+        if sku % 100 == 0:
+            logging.debug(f"Handle sky {sku}")
+
         if df_sku.shape[0] < config.heuristics_min_rows or df_sku["sales"].std() < 1e-5 or df_sku["sales"].max() < 1e-5:
-            forecast = fit_predict_const_mean(df_sku, ci_levels, horizon_period, freq_mult)
+            forecast = fit_predict_const_mean(df_sku, ci_levels, horizon_period, freq_name)
         else:
-            forecast = fit_predict_arima(df_sku, ci_levels, horizon_period, freq_mult)
+            if config.model_name == "prophet":
+                forecast = fit_predict_prophet(df_sku, ci_levels, horizon_period, freq_name)
+            elif config.model_name == "arima":
+                forecast = fit_predict_arima(df_sku, ci_levels, horizon_period, freq_name, seasonal_period)
+            else:
+                raise NotImplementedError(f"Unexpected model type: {config.model_name}")
 
         forecast["sku"] = sku
         forecast_all.append(forecast)
@@ -202,6 +238,7 @@ def calc_quality(
 ) -> pd.DataFrame:
     """
     Compute metrics: WAPE, WAPE max, Bias, 3-bin relative error histogram
+
     :param df: input dataframe, should contain columns 'sales', `predict_colname`
     :param hist_bias_borders: left and right borders of relative error histogram, should be a number between 0 and 1
     """

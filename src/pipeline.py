@@ -18,7 +18,7 @@ from preparation import (drop_anomaly_sales, drop_anomaly_sku,
 
 
 def prepare_data(config: Config, input_path: str, n_samples: Optional[int] = None):
-    logging.info(f"Config: {config}")
+    logging.info(f"Config: {config}, path: {input_path}")
 
     df = pd.read_parquet(input_path)
 
@@ -56,19 +56,19 @@ def fit_predict_model(config: Config):
     preidct.to_parquet(config.predict_path)
 
 
-def main(argv, argc):
-    path = argv[0]
+def run_pipeline(argv, argc):
+    path = argv[1]
 
     config = Config(frequency="week", horizon_days=7 * 8)
     logging.info(f"Start predict on weekly level for path {path}. Predicts will be saved to {config.predict_path}")
     prepare_data(config, path)
     fit_predict_model(config)
 
-    logging.info(f"Start predict on monthly level for path {path}. Predicts will be saved to {config.predict_path}")
     config = Config(frequency="month", horizon_days=12 * 30)
+    logging.info(f"Start predict on monthly level for path {path}. Predicts will be saved to {config.predict_path}")
     prepare_data(config, path)
-    fit_predict(config)
+    fit_predict_model(config)
 
 
 if __name__ == "__main__":
-    main(sys.argv, len(sys.argv))
+    run_pipeline(sys.argv, len(sys.argv))

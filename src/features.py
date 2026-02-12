@@ -13,6 +13,7 @@ from config import Config
 def add_weekly_stat(df: pd.DataFrame, lags: List[int] = [4, 8, 53]) -> pd.DataFrame:
     """
     Add rolling mean and sum sales
+
     :param lags: amount of weeks for rolling window
     """
     for lag in lags:
@@ -28,9 +29,6 @@ def add_weekly_stat(df: pd.DataFrame, lags: List[int] = [4, 8, 53]) -> pd.DataFr
         )
 
         df = df.merge(df_stats, on=["sku", "date"], how="left")
-
-        # df[f"mean_{lag}w"] = df_stats["mean"].copy()
-        # df[f"sum_{lag}w"] = df_stats["sum"].copy()
     return df
 
 
@@ -43,6 +41,7 @@ def add_weekly_lag(
 ) -> pd.DataFrame:
     """
     Add lag sales
+
     :param lags: amount of weeks or months for lag
     """
     if config.frequency == "month":
@@ -63,5 +62,4 @@ def add_date_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # TODO: add holidays
     # TODO: add amout of weeks since first and last sale by SKU
-
     return df

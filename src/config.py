@@ -31,26 +31,32 @@ class Config:
 
     @property
     def data_path(self) -> str:
-        return os.path.join(self.data_folder, f"data_{self.frequency}_{self.model_name}.parquet")
+        return os.path.join(self.data_folder, f"data_{self.frequency}.parquet")
 
     @property
     def predict_path(self) -> str:
         return os.path.join(self.predict_folder, f"predict_{self.frequency}_{self.model_name}.parquet")
 
 
-def get_frequency_params(frequency_name: str, horizon_days: int) -> Tuple[int, int, str]:
+def get_frequency_params(frequency_name: str, horizon_days: int) -> Tuple[int, str, int]:
+    """
+    Return sime seried frequency characterisics
+
+    :param frequency_name: freqency written in words (e.g. week, month)
+    :param horizon_days: predict interval in days
+    """
     if frequency_name == "day":
         horizon_period = horizon_days
-        freq_mult = 1
         freq_name = "D"
+        seasonal_period = 365
     elif frequency_name == "week":
         horizon_period = int(horizon_days / 7)
-        freq_mult = 7
         freq_name = "W-SUN"
+        seasonal_period = 52
     elif frequency_name == "month":
         horizon_period = int(np.floor(horizon_days / 30))
-        freq_mult = 31
         freq_name = "MS"
+        seasonal_period = 12
     else:
         raise NotImplementedError(f"Unexpected frequency! Expected 'day', 'week' or 'month', got {frequency_name}")
-    return (horizon_period, freq_mult, freq_name)
+    return (horizon_period, freq_name, seasonal_period)
