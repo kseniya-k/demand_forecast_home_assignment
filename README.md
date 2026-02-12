@@ -55,9 +55,23 @@ Each file contains the following columns:
 
 Some things would increase the quality of the predictions and the code, provided there were less strict deadlines:
 
+Model performance:
+
 - I would use more complex models like LSTM. Also, with the presence of more data (e.g., numerical: price, stock; categorical: product placement in stores, product type; future: planned price, advertisement features, weather forecast), it's relevant to use tree-based models like LightGBM or more complex sequence-to-sequence Neural Networks like Temporal Fusion Transformer or LLM-like models like Chronos 2.
 - All of these models (except Prophet) would benefit from adding holiday and weekend markup
 - Simpler models' predictions (models like Prophet and ARIMA) can be used as features in more complex models. Also, sometimes it's useful to model seasonality by sin/cos series decomposition.
 - Also, SKUs with insufficient data can be forecasted with slightly more sophisticated heuristics, for example, by the mean forecast of SKUs with close sales or, in general, of SKUs from the same cluster
 - For SARIMA models, hyperparameters can be chosen differently for each SKU cluster
-- Unit and end-to-end tests should be added to ensure reproducibility
+- For more complex models: look at learning curve, feature importance, SHAP
+
+Code:
+
+- Add unit tests to most of functions, add end-to-end tests to train and predict pipelines
+
+Usability in production:
+
+- Save trained models
+- Save data and model versions after training new model. Detect latest stable model and use it for prediction.
+- Detect if data for predict is new or it was already handled
+- Save statistincs on train and predict data and predictions (for example, mean and std in moving window). Alert if new data differs from old data significantly
+- Also, for more compelx models, alert if train and validation losses differs from "usual" levels
