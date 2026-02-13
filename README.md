@@ -4,7 +4,7 @@
 
 I chose Prophet as a main model because of its simplicity and natural ability to work with univariate Time Series data. Also, Prophet takes into account seasonality while some SKU clearly has yearly seasonal pattern. For the SKU with fewer than 10 points of data, a simple SKU-level heuristic was chosen as a predictor: mean sales of the last year of sales.
 
-Also, I tried to use SARIMA models. Final decision was made based on scoring models' predictions on cross-validation that took a year of historical data. The best model on the monthly level was the heuristic, it can mean that either the models need more tuning or another model should be used. Nevertheless, Prophet was chosen because it has better SKU-level aggregation WAPE metrics while having Bias > 0, and it predicts sales picks well.
+Also, I tried to use SARIMA models. Final decision was made based on scoring models' predictions on cross-validation that took a year of historical data. The best models on the monthly level were Prophet and the heuristic, it can mean that either the models need more tuning or another model should be used. Nevertheless, Prophet was chosen because it has better SKU-level aggregation WAPE metrics while having Bias > 0, and it predicts sales picks well.
 
 ### Confidence Intervals
 
