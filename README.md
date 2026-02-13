@@ -32,7 +32,7 @@ Also, as a shop owner, I would use the upper CI interval for inventory holding, 
 
 2. For the next quarter, I would use the same strategy: take three monthly predictions, then sum up the upper bounds of the prediction intervals for 90% CI.
 
-3. The method described in pt. 2 produces an estimation = 223 898 072 quantity. From metrics on historical data, we can assume that all of this amount will be bought, but probably we will need to supply more product by the end of the quarter to meet customers' demand
+3. The method described in pt. 2 produces an estimation = 223 898 072 quantity. From metrics on historical data, we can assume that all of this amount will be bought, but probably we will need to supply more product by the end of the quarter to meet customers' demand. The forecast attainment on historical data is 107%; accuracy, measured in month level, is 54%.
 
 ## Instruction for code running
 
